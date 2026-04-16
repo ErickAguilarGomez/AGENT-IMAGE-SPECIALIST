@@ -1,58 +1,78 @@
 import os
+import time
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langfuse.decorators import observe
+from langfuse.decorators import observe, langfuse_context
 from src.models import ContractChangeOutput
+from src.utils.prompt_loader import get_extraction_audit_prompts
+
 
 class ExtractionAgent:
     def __init__(self):
-        # Inicializamos GPT-4o con temperatura 0. ¡Cero tolerancia a la invención!
         self.llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0.0,
             api_key=os.getenv("OPENAI_API_KEY")
         )
         
-        # AQUÍ OCURRE LA MAGIA: 
-        # Obligamos al LLM a que su salida sea validada estrictamente por nuestro modelo Pydantic
         self.structured_llm = self.llm.with_structured_output(ContractChangeOutput)
         
-        # Diseñamos el System Prompt especializado para el Auditor
+        system_prompt, user_prompt = get_extraction_audit_prompts()
+        
         self.prompt_template = ChatPromptTemplate.from_messages([
-            ("system", 
-             "Eres un Auditor Legal de élite en la empresa LegalMove. "
-             "Tu responsabilidad exclusiva es identificar, aislar y describir cada cambio "
-             "introducido por la enmienda (adenda) respecto al contrato original. "
-             "\n\nReglas estrictas:"
-             "\n1. Distingue claramente entre adiciones, eliminaciones y modificaciones."
-             "\n2. Apóyate en el 'Mapa Contextual' proporcionado por el Analista Senior para orientarte."
-             "\n3. Tu salida debe cumplir estrictamente con el esquema JSON solicitado."
-             ),
-            ("user", 
-             "Aquí tienes la información procesada:"
-             "\n\n--- MAPA CONTEXTUAL (Del Analista) ---\n{context_map}"
-             "\n\n--- CONTRATO ORIGINAL ---\n{original_text}"
-             "\n\n--- ADENDA / ENMIENDA ---\n{amendment_text}"
-             "\n\nExtrae las diferencias y devuelve los datos en el formato estructurado requerido."
-            )
+            ("system", system_prompt),
+            ("user", user_prompt)
         ])
         
-        # Conectamos el prompt con el LLM ESTRUCTURADO
         self.chain = self.prompt_template | self.structured_llm
 
     @observe(name="extraction_agent")
     def run(self, context_map: str, original_text: str, amendment_text: str) -> ContractChangeOutput:
         """
-        Ejecuta el agente de extracción y devuelve un objeto validado por Pydantic.
+        Extracts and validates changes between contract and amendment.
+        
+        Args:
+            context_map: Contextual mapping from the contextualization agent
+            original_text: Text of the original contract
+            amendment_text: Text of the amendment/adenda
+            
+        Returns:
+            Structured ContractChangeOutput object with validated changes
         """
-        print("JARVIS: Agente de Extracción iniciando auditoría profunda...")
-        
-        # Ejecutamos la cadena. La respuesta ya no será un simple string,
-        # será un objeto ContractChangeOutput validado y perfecto.
-        response = self.chain.invoke({
-            "context_map": context_map,
-            "original_text": original_text,
-            "amendment_text": amendment_text
-        })
-        
-        return response
+        print("Running extraction audit...")
+        start_time = time.perf_counter()
+
+        try:
+            response = self.chain.invoke({
+                "context_map": context_map,
+                "original_text": original_text,
+                "amendment_text": amendment_text
+            })
+
+            if isinstance(response, ContractChangeOutput):
+                validated_output = response
+            else:
+                validated_output = ContractChangeOutput.model_validate(response)
+
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000)
+            langfuse_context.update_current_observation(
+                output={
+                    "sections_changed": validated_output.sections_changed,
+                    "topics_touched": validated_output.topics_touched,
+                    "summary_length": len(validated_output.summary_of_the_change),
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+
+            return validated_output
+
+        except Exception as error:
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000)
+            langfuse_context.update_current_observation(
+                level="ERROR",
+                status_message=f"Extraction audit failed: {error}",
+                output={
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+            raise RuntimeError(f"Error en el agente de extracción: {error}") from error
