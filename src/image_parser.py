@@ -5,25 +5,11 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from langfuse.decorators import observe, langfuse_context
 from src.utils.prompt_loader import get_ocr_prompt
+from src.utils.validation import validate_image_path
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-SUPPORTED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "tiff", "webp"}
-
-
-def validate_image_path(image_path: str) -> str:
-    """Validate that the image exists and has a supported file extension."""
-    if not os.path.isfile(image_path):
-        raise FileNotFoundError(f"Imagen no encontrada: {image_path}")
-
-    extension = os.path.splitext(image_path)[1].lower().lstrip('.')
-    if extension not in SUPPORTED_IMAGE_EXTENSIONS:
-        raise ValueError(
-            f"Formato de imagen no soportado: {extension}. Usa JPG, PNG, BMP, TIFF o WEBP."
-        )
-    return extension
 
 
 def encode_image(image_path: str) -> str:

@@ -1,29 +1,13 @@
 import sys
-from pathlib import Path
 from dotenv import load_dotenv
 from langfuse.decorators import observe, langfuse_context
 
 from src.image_parser import parse_contract_image
 from src.agents.contextualization_agent import ContextualizationAgent
 from src.agents.extraction_agent import ExtractionAgent
+from src.utils.validation import validate_image_paths
 
 load_dotenv()
-
-
-def validate_image_paths(original_image_path: str, amendment_image_path: str) -> None:
-    """Valida que ambos archivos existan y sean imágenes compatibles."""
-    invalid_paths = [path for path in (original_image_path, amendment_image_path) if not Path(path).is_file()]
-    if invalid_paths:
-        raise FileNotFoundError(f"No se encontraron las siguientes imágenes: {invalid_paths}")
-
-    allowed_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
-    invalid_extensions = [path for path in (original_image_path, amendment_image_path)
-                          if Path(path).suffix.lower() not in allowed_extensions]
-    if invalid_extensions:
-        raise ValueError(
-            f"Las siguientes imágenes usan un formato no soportado: {invalid_extensions}. "
-            "Utiliza JPG, PNG, BMP, TIFF o WEBP."
-        )
 
 
 @observe(name="contract-analysis")
